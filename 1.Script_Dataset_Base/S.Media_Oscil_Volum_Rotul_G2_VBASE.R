@@ -1,0 +1,317 @@
+getwd()
+
+library(quantmod)
+library(TTR)
+
+rm(list = ls())
+
+### CARGA DO DATASET IBOV_input
+dados <-  read.table('IBov_20210827.csv', sep = ',', 
+                     header = TRUE, stringsAsFactors = FALSE)
+nrow(dados)
+#View(dados)
+
+### SEPARACAO / RENOMEACAO DE COLUNAS - datas/dados do novo dataset IBov
+dados.fin <- dados[, c('Date', 'Open', 'High', 'Low', 'Close', 'Turnover')]
+names(dados.fin) <- c('Date', 'Open', 'High', 'Low', 'Close', 'Volume')
+dados.fin$HighLog <- log10(dados.fin$High)
+dados.fin$LowLog <- log10(dados.fin$Low)
+dados.fin$CloseLog <- log10(dados.fin$Close)
+dados.fin$VolumeLog <- log10(dados.fin$Volume)
+View(dados.fin)
+nrow(dados.fin)
+head(dados.fin, 3)
+tail(dados.fin, 3)
+
+#plot(log10(dados.fin$Volume), type = 'l')
+
+############################### RASTREADORES ###############################
+# PRECO FECHAMENTO (price action)
+dados.fin$PriceCl <- dados.fin$Close
+
+# BOLLINGER BANDs
+bbs <- BBands(dados.fin[, c('High', 'Low', 'Close')], sd = 2)
+dados.fin$BBANDdn <- bbs[, 'dn']
+dados.fin$BBANDmavg <- bbs[, 'mavg']
+dados.fin$BBANDup <- bbs[, 'up']
+dados.fin$BBANDpctB <- bbs[, 'pctB']
+
+# AVERAGE DIRECTIONAL MOVEMENT INDEX (ADX)
+adx <- ADX(dados.fin[, c('High', 'Low', 'Close')])
+dados.fin$ADXdip <- adx[, 'DIp']
+dados.fin$ADXdin <- adx[, 'DIn']
+dados.fin$ADXdx <- adx[, 'DX']
+dados.fin$ADXadx <- adx[, 'ADX']
+
+# PARABOLIC SAR
+dados.fin$SAR <- SAR(dados.fin[, c('High', 'Low')])
+
+### INCLUSAO do CRUZAMENTO - PRECOS FECH x BANDAS BOLLINGER
+dados.fin$ClxBB <- (dados.fin$Close-dados.fin$BBANDmavg)/
+  (dados.fin$BBANDup-dados.fin$BBANDdn)
+plot(dados.fin$ClxBB, type = 'l')
+
+### INCLUSAO do CRUZAMENTO - +DI x -DI, multiplicado pelo ADX
+dados.fin$pnADX <- (sign(dados.fin$ADXdip-dados.fin$ADXdin))*(dados.fin$ADXadx)
+plot(dados.fin$pnADX, type = 'l')
+
+### INCLUSAO do CRUZAMENTO PRECO FECH x PARABOLIC SAR
+dados.fin$ClxSAR <- (dados.fin$Close-dados.fin$SAR)/(dados.fin$SAR)
+plot(dados.fin$ClxSAR, type = 'l')
+View(dados.fin)
+
+### DATASET RASTREADORES (somente com as variaveis preditoras)
+dados.fin.rastr <- dados.fin[, c('Date', 'PriceCl', 'ClxBB', 'pnADX', 'ClxSAR')]
+
+View(dados.fin.rastr)
+nrow(dados.fin.rastr)
+
+### DATASET RASTREADORES SEM VALORES AUSENTES (retirando os dados NA's)
+dados.fin.rastr.freeNA <- na.omit(dados.fin.rastr)
+View(dados.fin.rastr.freeNA)
+nrow(dados.fin.rastr.freeNA)
+
+## DATASET RASTREADORES AJUSTADO (para concatenar com osciladores)
+dados.fin.rastr.adj <- dados.fin.rastr.freeNA[33:nrow(dados.fin.rastr.freeNA), ]
+View(dados.fin.rastr.adj)
+nrow(dados.fin.rastr.adj)
+
+############################### OSCILADORES ################################
+### MACD (MOVING AVERAGE CONVERGENCE/DIVERGENCE)
+macd <- data.frame(MACD(dados.fin[, 'Close'], 12, 26, 9, maType = SMA))
+dados.fin$MACDmacd <- macd$macd
+dados.fin$MACDsign <- macd$signal
+dados.fin$MACD <- (macd$macd - macd$signal)
+
+plot(dados.fin$MACD, type = 'l')
+hist(dados.fin$MACD)
+
+### CCI (COMMODITY CHANNEL INDEX)
+dados.fin$CCI <- CCI(dados.fin[, c('High', 'Low', 'Close')], n = 21)
+
+plot(dados.fin$CCI, type = 'l')
+hist(dados.fin$CCI)
+
+### RSI (RELATIVE STRENGTH INDEX)
+dados.fin$RSI <- RSI(dados.fin[, 'Close'], n = 21)
+
+plot(dados.fin$RSI, type = 'l')
+hist(dados.fin$RSI)
+
+### STO (STOCHASTIC OSCILLATOR)
+stoch <- data.frame(stoch(dados.fin[, c('High', 'Low', 'Close')]),
+                    nFastK = 14, nFastD = 3, nSlowD = 3)
+dados.fin$STOfastK <- stoch$fastK
+dados.fin$STOfastD <- stoch$fastD
+dados.fin$STO <- (dados.fin$STOfastK - dados.fin$STOfastD)
+
+plot(dados.fin$STO, type = 'l')
+hist(dados.fin$STO)
+
+### DATASET OSCILADORES (somente com as variaveis preditoras)
+dados.fin.oscil <- dados.fin[, c('Date', 'MACD', 'CCI', 'RSI', 'STO')]
+View(dados.fin.oscil)
+nrow(dados.fin.oscil)
+
+## DATASET OSCILADORES SEM VALORES AUSENTES (retirando os dados NA's)
+dados.fin.oscil.freeNA <- na.omit(dados.fin.oscil)
+View(dados.fin.oscil.freeNA)
+nrow(dados.fin.oscil.freeNA)
+
+## DATASET OSCILADORES AJUSTADO (para concatenar com rastreadores)
+dados.fin.oscil.adj <- dados.fin.oscil.freeNA[27:nrow(dados.fin.oscil.freeNA), ]
+View(dados.fin.oscil.adj)
+nrow(dados.fin.oscil.adj)
+
+################################# VOLUME ####################################
+### ON BALANCE VOLUME (OBV) - nesse script, nos tentaremos obter resultados
+# mais significativos com os indicadores OBV e AD, utilizando as saidas
+# padronizadas do pacote TTR (sem a estrategia simplificada de capturar
+# topos e fundos nos graficos de preco e volume, para buscar divergencias).
+dados.fin$OBV <- OBV(dados.fin[, 'CloseLog'], dados.fin[, 'VolumeLog'])
+
+plot(dados.fin$OBV, type = 'l')
+hist(dados.fin$OBV)
+
+### ACUMULATION / DISTRIBUTION (A/D) - sera ajustado para nosso projeto
+dados.fin$AD <- chaikinAD(dados.fin[, c('HighLog', 'LowLog', 'CloseLog')],
+                          dados.fin[, 'VolumeLog'])
+
+plot(dados.fin$AD, type = 'l')
+hist(dados.fin$AD)
+
+### VWAP (Volume Weighed Average Price) - CURTA E MEDIA
+dados.fin$VWAP5 <- VWAP(dados.fin[, 'CloseLog'], dados.fin[, 'VolumeLog'], 5)
+dados.fin$VWAP20 <- VWAP(dados.fin[, 'CloseLog'], dados.fin[, 'VolumeLog'], 20)
+
+### INCLUSAO dos CRUZAMENTOS PRECO CLOSE x VWAP (CURTA E MEDIA)
+dados.fin$ClxVWAP5 <- (dados.fin$CloseLog-dados.fin$VWAP5)/(dados.fin$VWAP5)
+plot(dados.fin$ClxVWAP5, type = 'l')
+hist(dados.fin$ClxVWAP5)
+
+dados.fin$ClxVWAP20 <- (dados.fin$CloseLog-dados.fin$VWAP20)/(dados.fin$VWAP20)
+plot(dados.fin$ClxVWAP20, type = 'l')
+hist(dados.fin$ClxVWAP20)
+
+### DATASET VOLUME (somente com as variaveis preditoras)
+dados.fin.volum <- dados.fin[, c('Date', 'OBV', 'AD',
+                                 'ClxVWAP5', 'ClxVWAP20')]
+View(dados.fin.volum)
+nrow(dados.fin)
+
+## DATASET VOLUME SEM VALORES AUSENTES (retirando os dados NA's)
+dados.fin.volum.freeNA <- na.omit(dados.fin.volum)
+nrow(dados.fin.volum.freeNA)
+View(dados.fin.volum.freeNA)
+
+## DATASET VOLUME AJUSTADO (para concatenar com rastreadores e osciladores)
+dados.fin.volum.adj <- dados.fin.volum.freeNA[41:nrow(dados.fin.volum.freeNA), ]
+View(dados.fin.volum.adj)
+
+nrow(dados.fin.volum.adj)
+nrow(dados.fin.rastr.adj)
+nrow(dados.fin.oscil.adj)
+
+############################# ROTULAGEM ################################
+### SEPARACAO / RENOMEACAO DE COLUNAS - datas/dados do novo dataset IBov
+dados.fin.2 <- dados[, c('Date', 'Open', 'High', 'Low', 'Close', 'Turnover')]
+names(dados.fin.2) <- c('Date', 'Open', 'High', 'Low', 'Close', 'Volume')
+View(dados.fin.2)
+head(dados.fin.2, 3)
+tail(dados.fin.2, 3)
+
+# MEDIAS MOVEIS PARA ROTULAGEM
+# SMA5 - media movel simples 5 periodos
+dados.fin.2$SMA5 <- SMA(dados.fin.2$Close, n = 5)
+# SMA15 - media movel simples 15 periodos
+dados.fin.2$SMA15 <- SMA(dados.fin.2$Close, n = 15)
+# SMA30 - media movel simples 30 periodos
+dados.fin.2$SMA30 <- SMA(dados.fin.2$Close, n = 30)
+# SMA60 - media movel simples 60 periodos
+dados.fin.2$SMA60 <- SMA(dados.fin.2$Close, n = 60)
+length(dados.fin.2)
+nrow(dados.fin.2)
+View(dados.fin.2)
+
+## DATASET ROTULAGEM (considerando somente as medias calculadas)
+dados.fin.rot <- na.omit(dados.fin.2)
+length(dados.fin.rot)
+nrow(dados.fin.rot)
+View(dados.fin.rot)
+
+## COMPARACAO ENTRE MEDIAS PARA ROTULAGEM DIARIA
+# media de 5 e 15
+dados.fin.rot$med5med15 <- dados.fin.rot$SMA5 > dados.fin.rot$SMA15
+# media de 5 e 30
+dados.fin.rot$med5med30 <- dados.fin.rot$SMA5 > dados.fin.rot$SMA30
+
+dados.fin.rot$RotDia <- NA
+for (k in 1:nrow(dados.fin.rot)) {
+  if(dados.fin.rot$med5med15[k] == TRUE & dados.fin.rot$med5med30[k] == TRUE) {
+    dados.fin.rot$RotDia[k] <- 1
+  } else if(dados.fin.rot$med5med15[k] == FALSE & dados.fin.rot$med5med30[k] == FALSE) { 
+    dados.fin.rot$RotDia[k] <- -1
+  } else {
+    dados.fin.rot$RotDia[k] <- 0
+  }
+}
+hist(dados.fin.rot$RotDia)
+#View(dados.fin.rot)
+
+## COMPARACAO ENTRE MEDIAS PARA ROTULAGEM SEMANAL
+# media de 15 e 30
+dados.fin.rot$med15med30 <- dados.fin.rot$SMA15 > dados.fin.rot$SMA30
+# media de 15 e 60
+dados.fin.rot$med15med60 <- dados.fin.rot$SMA15 > dados.fin.rot$SMA60
+
+dados.fin.rot$RotSem <- NA
+for (k in 1:nrow(dados.fin.rot)) {
+  if(dados.fin.rot$med15med30[k] == TRUE & dados.fin.rot$med15med60[k] == TRUE) {
+    dados.fin.rot$RotSem[k] <- 1
+  } else if(dados.fin.rot$med15med30[k] == FALSE & dados.fin.rot$med15med60[k] == FALSE) { 
+    dados.fin.rot$RotSem[k] <- -1
+  } else {
+    dados.fin.rot$RotSem[k] <- 0
+  }
+}
+hist(dados.fin.rot$RotSem)
+#View(dados.fin.rot)
+
+## OBSERVACAO - RELACAO ENTRE AS CLASSES -1, 0 e 1
+#table(dados.fin.rot$RotDia, dados.fin.rot$RotSem)
+
+## TESTE LOGICO ENTRE AS ROTULAGENS DIARIA E SEMANAL
+dados.fin.rot$RotGer <- NA
+for (t in 1:nrow(dados.fin.rot)) {
+  if(dados.fin.rot$RotDia[t] == 1 & dados.fin.rot$RotSem[t] == 1) {
+    dados.fin.rot$RotGer[t] <- 1
+  } else if(dados.fin.rot$RotDia[t] == 0 & dados.fin.rot$RotSem[t] == 1) {
+    dados.fin.rot$RotGer[t] <- 1
+  } else if(dados.fin.rot$RotDia[t] == -1 & dados.fin.rot$RotSem[t] == 1) {
+    dados.fin.rot$RotGer[t] <- 0
+  } else if(dados.fin.rot$RotDia[t] == 1 & dados.fin.rot$RotSem[t] == 0) {
+    dados.fin.rot$RotGer[t] <- 0
+  } else if(dados.fin.rot$RotDia[t] == 0 & dados.fin.rot$RotSem[t] == 0) {
+    dados.fin.rot$RotGer[t] <- 0
+  } else if(dados.fin.rot$RotDia[t] == -1 & dados.fin.rot$RotSem[t] == 0) {
+    dados.fin.rot$RotGer[t] <- 0
+  } else if(dados.fin.rot$RotDia[t] == 1 & dados.fin.rot$RotSem[t] == -1) {
+    dados.fin.rot$RotGer[t] <- 0
+  } else if(dados.fin.rot$RotDia[t] == 0 & dados.fin.rot$RotSem[t] == -1) {
+    dados.fin.rot$RotGer[t] <- -1
+  } else {
+    dados.fin.rot$RotGer[t] <- -1
+  }
+}
+hist(dados.fin.rot$RotGer)
+View(dados.fin.rot)
+nrow(dados.fin.rot)
+
+## DATASET ROTULAGEM AJUSTADO (pronto p/ concatenar c/ rastr + oscil + volum)
+dados.fin.rot.adj <- dados.fin.rot
+View(dados.fin.rot.adj)
+nrow(dados.fin.rot.adj)
+
+## CONCATENANDO OS DATAFRAMES - RASTREADORES, OSCILADORES, VOLUME E ROTULAGEM
+library(dplyr)
+dados.fin.rastr.oscil <- inner_join(dados.fin.rastr.adj, dados.fin.oscil.adj,
+                                    by = 'Date')
+dados.fin.rastr.oscil.volum <- inner_join(dados.fin.rastr.oscil,
+                                          dados.fin.volum.adj, by = 'Date')
+dados.fin.rastr.oscil.volum.rot <- inner_join(dados.fin.rastr.oscil.volum,
+                                              dados.fin.rot.adj, by = 'Date')
+View(dados.fin.rastr.oscil.volum.rot)
+nrow(dados.fin.rastr.oscil.volum.rot)
+
+############################# MODELAGEM ###############################
+## PREPARANDO DATAFRAME UNICO PARA MODELAGEM
+vbase.rastr.oscil.volum.rot <- dados.fin.rastr.oscil.volum.rot[, c('PriceCl',
+                                                                   'ClxBB', 'pnADX', 'ClxSAR',
+                                                                   'MACD', 'CCI', 'RSI',
+                                                                   'STO', 'OBV', 'AD',
+                                                                   'ClxVWAP5', 'ClxVWAP20',
+                                                                   'RotGer')]
+View(vbase.rastr.oscil.volum.rot)
+nrow(vbase.rastr.oscil.volum.rot)
+
+## DEFININDO VARIAVEIS PREDITORAS
+atrib <- c('PriceCl', 'ClxBB', 'pnADX', 'ClxSAR', 'MACD', 'CCI', 'RSI',
+           'STO', 'OBV', 'AD', 'ClxVWAP5', 'ClxVWAP20')
+
+## DEFININDO HORIZ = JANELA DESLIZANTE PARA GARANTIR PREVISIBILIDADE
+szv <- nrow(vbase.rastr.oscil.volum.rot)
+horiz <- 6 # (h definido em reuniao de 28/10 com Lauretto)
+vbase.rastr.oscil.volum.rot$RotGer <- c(vbase.rastr.oscil.volum.rot$RotGer[horiz:szv],
+                                        rep(NA, (horiz-1)))
+vbase.rastr.oscil.volum.rot <- na.omit(vbase.rastr.oscil.volum.rot)
+nrow(vbase.rastr.oscil.volum.rot)
+ncol(vbase.rastr.oscil.volum.rot)
+
+## DEFININDO VARIAVEL TARGET COMO FATOR
+vbase.rastr.oscil.volum.rot$RotGer <- as.factor(vbase.rastr.oscil.volum.rot$RotGer)
+#View(vbase.rastr.oscil.volum.rot)
+
+### EXPORTANDO DATASET VBASE em FORMATO CSV
+my.df.1 <- vbase.rastr.oscil.volum.rot
+f.out.1 <- 'VBASE_s.media_oscil_volum_rot_251121.csv'
+write.csv(x = my.df.1, file = f.out.1)
